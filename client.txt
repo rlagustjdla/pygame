@@ -1,0 +1,86 @@
+import socket
+import RPi.GPIO as GPIO
+import time
+import threading
+
+SERVER_IP = '10.125.126.208'
+PORT = 9000
+
+SHOCK_PIN = 17
+BUTTON_PIN = 18
+LIGHT_PIN = 27
+
+client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    client.connect((SERVER_IP, PORT))
+except Exception as e:
+    print("fail to connect to server")
+    exit()
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(SHOCK_PIN, GPIO.IN)
+GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(LIGHT_PIN, GPIO.IN)
+
+# 상태 추적 변수
+shock_previous = GPIO.input(SHOCK_PIN)
+button_previous = GPIO.input(BUTTON_PIN)
+light_previous = GPIO.input(LIGHT_PIN)
+
+# 이벤트 큐를 사용하여 메시지 보내기
+event_queue = []
+
+def send_message(message):
+    try:
+        client.sendall(message.encode('utf-8'))
+    except Exception as e:
+        print(f"Error sending message: {e}")
+
+def shock_detected(channel):
+    global shock_previous
+    current_state = GPIO.input(SHOCK_PIN)
+    if current_state != shock_previous:  # 상태가 변화했을 때만
+        shock_previous = current_state
+        print("shock detected")
+        event_queue.append("shock_detected")
+
+def button_pressed(channel):
+    global button_previous
+    current_state = GPIO.input(BUTTON_PIN)
+    if current_state != button_previous:  # 상태가 변화했을 때만
+        button_previous = current_state
+        print("button pressed")
+        event_queue.append("press_detected")
+        
+def light_detected(channel):
+    global light_previous
+    current_state = GPIO.input(LIGHT_PIN)
+    if current_state != light_previous:  # 상태가 변화했을 때만
+        light_previous = current_state
+        if GPIO.input(LIGHT_PIN) == GPIO.HIGH:
+            print("dark detected")
+        event_queue.append("dark_detected")
+        
+# 이벤트 감지 설정
+GPIO.add_event_detect(LIGHT_PIN, GPIO.RISING, callback=light_detected, bouncetime=200)
+GPIO.add_event_detect(BUTTON_PIN, GPIO.FALLING, callback=button_pressed, bouncetime=200)
+GPIO.add_event_detect(SHOCK_PIN, GPIO.FALLING, callback=shock_detected, bouncetime=200)
+
+def process_events():
+    while True:
+        if event_queue:
+            message = event_queue.pop(0)
+            send_message(message)
+        time.sleep(0.05)
+
+# 이벤트 처리 스레드 시작
+event_thread = threading.Thread(target=process_events, daemon=True)
+event_thread.start()
+
+try:
+    while True:
+        time.sleep(0.1)
+except KeyboardInterrupt:
+    print("exiting...")
+finally:
+    GPIO.cleanup()
