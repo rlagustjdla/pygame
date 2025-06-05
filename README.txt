@@ -1,1 +1,1 @@
-sdfsdagsd
+game_v2.py, items.py만 수정
